@@ -1,0 +1,1 @@
+This is frankly a code dump to just hold onto a few scripts that I have from my consulting work. There is much more in a private repository. Due to the nature of working for the VA, I cannot always release code that was used in a VA environment (if it shows internal connections/schemas). The files here were used for accessing information external to the VA.
