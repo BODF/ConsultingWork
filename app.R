@@ -59,7 +59,6 @@ thematic::thematic_shiny(font = "auto")
 # writeBin(c(cipher), ".secrets/cipher")
 # writeBin(c(key), ".secrets/gatekeeper")
 # writeBin(c(nonce), ".secrets/cipher_n")
-
 key <- readBin(
   ".secrets/gatekeeper",
   what="raw",
@@ -77,16 +76,17 @@ passphrase <- rawToChar(
     nonce = nonce
   )
 )
-
 ## Digital Ocean Connector
 con <- DBI::dbConnect(
   drv = Postgres(),
-  host     = "db-postgresql-nyc3-39798-do-user-19196867-0.h.db.ondigitalocean.com",
+  host     = "db-postgresql-nssp-do-user-19196867-0.l.db.ondigitalocean.com",
   dbname   = "defaultdb",
   user     = "doadmin",
   password = passphrase,
-  port     = 25060
+  port     = 25060,
+  sslmode  = "require"
 )
+
 ############ FIRST TIME POSTGRESQL SET UP ################
 # ## Set up the actions table using the existing data as
 # ## a template
@@ -100,7 +100,7 @@ con <- DBI::dbConnect(
 # names(test_data) <- stringr::str_remove(
 # names(test_data), " "
 # )
-# # create table using zero rows
+# create table using zero rows
 # DBI::dbCreateTable(
 #   con,
 #   name = "actions",
@@ -119,6 +119,13 @@ con <- DBI::dbConnect(
 # )
 # # check for insert
 # DBI::dbReadTable(con, "actions")
+# # If for some reason you need to delete some rows:
+# dbSendQuery(conn=con,
+#             statement = paste0(
+#               "delete from public.actions ",
+#               "where id in ('231','232')"
+#             )
+# )
 
 ######## MAIN ################
 
@@ -134,7 +141,8 @@ fields <- c(
   "timeline",
   "status",
   "statuscomments",
-  "reviewernotes",
+  "lastupdateq",
+  # "reviewernotes",
   "lastupdate"
 )
 
@@ -251,11 +259,11 @@ saveData <- function(
     data$id <- as.character( max_id + 1 )
     data$updatecount <- 0
     data$newestrecord <- "Yes"
-    data$lastupdate <- today()
-    # reorder
-    data <- data[,c(12:14,1:11)]
+    # reorder to match the SQL table
+    data <- data[,c(12:14,1:8,11,10,9)]
     # Add the data as a new row
     # sheet_append(table, data, sheet = "R Actions") #google
+    print(data)
     dbAppendTable(
       conn = con,
       name = "actions",  # table name
@@ -387,8 +395,9 @@ loadData <- function() {
       "Newest Record" = newestrecord,
       "Primary Objective"=primaryobjective,
       "All Objectives" = allobjectives,
-      "Reviewer Notes"=reviewernotes,
+#      "Reviewer Notes"=reviewernotes,
       "Last Update"=lastupdate,
+      "Last Update Q+FY"=lastupdateq,
       "Status Comments"=statuscomments,
       "Status"=status,
       "Timeline"=timeline,
@@ -401,39 +410,29 @@ loadData <- function() {
       "Primary Agency"=factor(
         `Primary Agency`,
         levels=c(
-          "DHS CBP",
-          "DHS ICE",
-          "DHS OHS",
-          "DHS USCG",
-          "DOD",
-          "DOL OSHA",
-          "DOL VETS",
-          "DOJ",
-          "DOT FRA",
-          "DOT NHTSA",
-          "ED",
-          "HHS ACF",
-          "HHS ACL",
-          "HHS AHRQ",
-          "HHS ASPE",
-          "HHS CDC",
-          "HHS CMS",
-          "HHS FDA",
-          "HHS HRSA",
-          "HHS IHS",
-          "HHS NIH",
-          "HHS OSG",
-          "HHS OASH",
-          "HHS SAMHSA",
-          "HUD",
-          "SAMHSA",
-          "USDA ERS",
-          "USDA FS",
-          "USDA NASS",
-          "USDA NIFA",
-          "USDA OPPE",
-          "USDA RD",
-          "VA"
+          'ACF',
+          'ACL',
+          'AHRQ',
+          'ASPE',
+          'BHCC',
+          'CDC',
+          'CMS',
+          'DHS',
+          'DOD',
+          'DOJ',
+          'DOL',
+          'DOT',
+          'ED',
+          'FDA',
+          'HRSA',
+          'HUD',
+          'IHS',
+          'NIH',
+          'OASH',
+          'OSG',
+          'SAMHSA',
+          'USDA',
+          'VA'
         )
         ),
       "Timeline"=factor(
@@ -452,12 +451,22 @@ loadData <- function() {
           )
         ),
       ID=as.character(ID)
+    ) %>% # reorder the status comments for viewing
+    select(
+      1:11, # id etc up to Status
+      14, # status comments
+      13, # last update quarter and FY
+      12  # last data update, literal date
     )
 }
 
 # find current fiscal year and quarter for graphics
-fy_Q <- function(){
-  x <- quarter(today(), fiscal_start = 10, with_year = TRUE)
+# and the most recent update's FY + Q
+fy_Q <- function(date_input = today()){
+  # default to today's date
+  x <- quarter(date_input,
+               fiscal_start = 10,
+               with_year = TRUE)
   y <- str_extract(str_remove(x, "^.."), "^..")
   z <- str_extract(x, ".$")
   paste0("Q", z, " FY", y)
@@ -552,10 +561,10 @@ ui <- navbarPage("Interagency Suicide Prevention Board |",
           "can be ordered using the arrows above each ",
           "column."
           )),
-        h6(em("Entering Data--")),
+        h6(em("Entering/Updating Data--")),
         p(paste0(
           "To enter wholly new line items, use ",
-          "the 'Data Entry' tab, above. To update ",
+          "the 'New Action' tab, above. To update ",
           "an existing item, find ",
           "it below, double click on the field to edit, ",
           "and click outside the table to commit your edit.",
@@ -579,46 +588,36 @@ ui <- navbarPage("Interagency Suicide Prevention Board |",
     ),
     # Data entry page
     tabPanel(
-      "Data Entry",
+      "New Action Submission (not updates)",
       textInput("primarysd", "Primary SD", value = NULL),
       textInput("primaryobjective", "Primary Objective",""),
       textInput("allobjectives","All Objectives", ""),
       selectInput(
         "primaryagency","Primary Agency",
         list(
-          "DHS CBP"="DHS CBP",
-          "DHS ICE"="DHS ICE",
-          "DHS OHS"="DHS OHS",
-          "DHS USCG"="DHS USCG",
-          "DOD"="DOD",
-          "DOL OSHA"="DOL OSHA",
-          "DOL VETS"="DOL VETS",
-          "DOJ"="DOJ",
-          "DOT FRA"="DOT FRA",
-          "DOT NHTSA"="DOT NHTSA",
-          "ED"="ED",
-          "HHS ACF"="HHS ACF",
-          "HHS ACL"="HHS ACL",
-          "HHS AHRQ"="HHS AHRQ",
-          "HHS ASPE"="HHS ASPE",
-          "HHS CDC"="HHS CDC",
-          "HHS CMS"="HHS CMS",
-          "HHS FDA"="HHS FDA",
-          "HHS HRSA"="HHS HRSA",
-          "HHS IHS"="HHS IHS",
-          "HHS NIH"="HHS NIH",
-          "HHS OSG"="HHS OSG",
-          "HHS OASH"="HHS OASH",
-          "HHS SAMHSA"="HHS SAMHSA",
-          "HUD"="HUD",
-          "SAMHSA"="SAMHSA",
-          "USDA ERS"="USDA ERS",
-          "USDA FS"="USDA FS",
-          "USDA NASS"="USDA NASS",
-          "USDA NIFA"="USDA NIFA",
-          "USDA OPPE"="USDA OPPE",
-          "USDA RD"="USDA RD",
-          "VA"="VA"
+          'ACF'='ACF',
+          'ACL'='ACL',
+          'AHRQ'='AHRQ',
+          'ASPE'='ASPE',
+          'BHCC'='BHCC',
+          'CDC'='CDC',
+          'CMS'='CMS',
+          'DHS'='DHS',
+          'DOD'='DOD',
+          'DOJ'='DOJ',
+          'DOL'='DOL',
+          'DOT'='DOT',
+          'ED'='ED',
+          'FDA'='FDA',
+          'HRSA'='HRSA',
+          'HUD'='HUD',
+          'IHS'='IHS',
+          'NIH'='NIH',
+          'OASH'='OASH',
+          'OSG'='OSG',
+          'SAMHSA'='SAMHSA',
+          'USDA'='USDA',
+          'VA'='VA'
           )
         ),
       textInput("actions","Actions",""),
@@ -639,19 +638,34 @@ ui <- navbarPage("Interagency Suicide Prevention Board |",
            )
         ),
       textInput("statuscomments","Status Comments",""),
+      # tooltip(
+      #   textInput("reviewernotes","Reviewer Notes",""),
+      #   "Leave empty unless you are also the reviewer",
+      #   id = "ReviewerTip",
+      #   placement = "right"
+      #   ),
+      selectInput("lastupdateq","Quarter + Fiscal Year for the Data of This Entry",
+                  as.list(
+                    c(
+                      fy_Q(today() - months(9)),
+                      fy_Q(today() - months(6)),
+                      fy_Q(today() - months(3)),
+                      fy_Q(),
+                      fy_Q(today() + months(3))
+                    )
+                  )),
       tooltip(
-        textInput("reviewernotes","Reviewer Notes",""),
-        "Leave empty unless you are also the reviewer",
-        id = "ReviewerTip",
-        placement = "right"
-        ),
-      dateInput("lastupdate",
-                "Last Update",
+        dateInput("lastupdate",
+                "Date of Entry",
                 value = today()
-                ),
+        ),
+        "Defaults to today",
+        id = "UpdateTooltip",
+        placement = "right"     
+        ),
       actionButton(
         "submit",
-        "Submit New Line Item")
+        "Submit New Action Item")
     ),
     
     # Graphics page
@@ -788,7 +802,9 @@ server <- function(input, output, session) {
   formData <- reactive({
     data <- sapply (
       fields, function(x) {
-        if (length(input[[x]])==0){
+        if (is.Date(input[[x]]) && length(input[[x]]) > 0) {
+          as.character(input[[x]])
+        } else if (length(input[[x]])==0){
           NA  # explicitly declare NA
         } else input[[x]]
       }
@@ -874,9 +890,8 @@ server <- function(input, output, session) {
         # col uses 0 base indexing in a breach of R standard
         1,input$responses_cell_edit$col+1
         ] <-
-        if (input$responses_cell_edit$col > 12) {
-          # used to be more date cols at the end,
-          # now this will just grab the Last Update col
+        if (input$responses_cell_edit$col == 13) {
+          #  this will just grab the Last Update col
           ymd(input$responses_cell_edit$value)
         } else if (input$responses_cell_edit$col == 10) {
           # Force status updates to title case
@@ -887,7 +902,7 @@ server <- function(input, output, session) {
       dynamic_data <- dynamic_data %>%
         mutate(
           `Update Count` = `Update Count` + 1,
-          `Last Update` = today(),
+          `Last Update` = today() # force it to today
         )
       # database names
       names(dynamic_data)[4:14] <- fields
@@ -895,7 +910,32 @@ server <- function(input, output, session) {
         "id", "updatecount", "newestrecord"
       )
       
-      # add the new row to the Google Sheet
+      # reorder data to match the database order
+      dynamic_data <- dynamic_data %>%
+        select(
+          1:11, # everything up to status
+          14, # last update
+          13, # last update Quarter + FY
+          12  # status comments go last in the SQL table
+        )
+      
+      # add the FY + Q of the update
+      # dynamic_data$lastupdateq <- fy_Q()
+      
+      # Force Newest Record in case the data got corrupted
+      dynamic_data$newestrecord <- "Yes"
+      # Agency, Timeline, and Status are factors-> reset
+      dynamic_data$primaryagency <- as.character(
+        dynamic_data$primaryagency
+      )
+      dynamic_data$timeline <- as.character(
+        dynamic_data$timeline
+      )
+      dynamic_data$status <- as.character(
+        dynamic_data$status
+      )
+      
+      # add the new row to the SQL table
       saveData(
         dynamic_data,
         new_data = FALSE # update, see function
@@ -1152,7 +1192,10 @@ server <- function(input, output, session) {
       ) %>%
       # then summarize
       group_by(Status) %>%
-      summarize("Count" = n()) %>%
+      summarize(
+        "Count" = n(),
+        "Quarter"=max(`Last Update Q+FY`)
+        ) %>%
       {
         pie(
           .$Count,
@@ -1184,7 +1227,7 @@ server <- function(input, output, session) {
           main = paste0(
             "Status of all actions in the\nFederal",
             " Action Plan, as of ",
-            fy_Q(),  # outputs "Qx FYxx"
+            max(.$Quarter),  # get most recent Q + FY
             " (n=",
             sum(.$Count),
             ")"
@@ -1307,7 +1350,10 @@ server <- function(input, output, session) {
         )
       ) %>%
       group_by(Status) %>%
-      summarize("Count" = n()) %>%
+      summarize(
+        "Count" = n(),
+        "Quarter" = max(`Last Update Q+FY`)
+        ) %>%
       mutate(
         Percent = 100*Count / sum(Count),
         color = case_when(
@@ -1333,7 +1379,7 @@ server <- function(input, output, session) {
         "Status of ",
         input$FYSelect,
         " Actions from the\nFederal Action Plan,\nas of ",
-        fy_Q(),
+        max(.$Quarter), # get most recent Q+FY
         " (n=",
         sum(.$Count),
         ")"
@@ -1416,6 +1462,7 @@ server <- function(input, output, session) {
         )) +
       # theme_void() +
       theme(
+        legend.position='none',
         plot.title=element_text(size=18),
         axis.text=element_text(size=14),
         axis.text.x = element_text(angle = 45, vjust=0.5),
@@ -1424,26 +1471,27 @@ server <- function(input, output, session) {
   }})
   
   output$FY_total <- renderPlot({
-    ggplot(
-      # filter the data
-      reactiveData() %>%
-        slice( # current items
-          input$responses_rows_all
-        ) %>%
-        filter(
-          `Newest Record` == "Yes"
-        ) %>%
-        # transform any missing values
-        mutate(
-          Timeline = case_when(
-            is.na(Timeline) ~ "Missing",
-            Timeline == "" ~ "Missing",
-            TRUE ~ Timeline
-          )
-        ) %>%
-        # then summarize
-        group_by(Timeline) %>%
-        summarize("Count" = n()),
+    # filter the data
+    reactiveData() %>%
+      slice( # current items
+        input$responses_rows_all
+      ) %>%
+      filter(
+        `Newest Record` == "Yes"
+      ) %>%
+      # transform any missing values
+      mutate(
+        Timeline = case_when(
+          is.na(Timeline) ~ "Missing",
+          Timeline == "" ~ "Missing",
+          TRUE ~ Timeline
+        )
+      ) %>%
+      # then summarize
+      group_by(Timeline) %>%
+      summarize("Count" = n()) %>%
+    {ggplot(
+      .,
       aes(
         x = Timeline,
         y = Count,
@@ -1454,9 +1502,15 @@ server <- function(input, output, session) {
       ggtitle("Total Actions by Fiscal Year") +
       xlab("Fiscal Year") +
       scale_fill_manual(
-        values = cdc_blue(
-          length(unique(reactiveData()$Timeline))
-        )
+        # if any data is missing FY, make that gray
+        values = if (any(.$Timeline=="Missing")) {
+          cdc_blue(
+          length(unique(.$Timeline))
+        )} else { # else give all blue tones
+          cdc_blues(1 + length( unique( .$Timeline ) ) )[
+            2:(length( unique( .$Timeline ) ) + 1)
+          ]
+        }
       ) +
       scale_y_continuous(
         breaks = function(Count){
@@ -1468,11 +1522,12 @@ server <- function(input, output, session) {
         }
       ) +
       theme(
+        legend.position = "none",
         plot.title=element_text(size=18),
         axis.text=element_text(size=15),
         axis.text.x = element_text(angle = 45, vjust=0.5),
         axis.title=element_text(size=18, face = "bold")
-      )
+      )}
   })
   
   ### Timeline of FY Counts
@@ -1543,7 +1598,7 @@ server <- function(input, output, session) {
       disable = list(
         # disable ID, update count, newest record
         # latest update and timeline from editing
-        columns = c(0:2,9,13)
+        columns = c(0:2,9,11)
         )
       ),
     options = list(
@@ -1553,14 +1608,15 @@ server <- function(input, output, session) {
         # NULL,  # rownum col
         NULL, NULL, list(search='Yes'),  # newest record col
         NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL
+        NULL, NULL, NULL, 
+        NULL, NULL, NULL,
+        NULL, NULL
         ),
       columnDefs = list(
         # Long Text Columns
-        list(width = '200px', targets = c(7:8,11)),
+        list(width = '200px', targets = c(7:8,10)),
         # Date Columns and short text
-        list(width = '75px', targets = c(9,13))
+        list(width = '75px', targets = c(9,11))
         ),
       scrollX=TRUE,
       scrollCollapse=TRUE,
