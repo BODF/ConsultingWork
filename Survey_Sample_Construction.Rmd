@@ -1,0 +1,255 @@
+---
+title: "EDU Survey Sampling"
+author: "Jordan White, PhD"
+date: "10/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readr)
+```
+
+## Goals
+
+Congress has instructed the VBA to administer a survey that will help us better understand veterans’ impressions of the VBA EDU landscape. The survey will include veterans and their beneficiaries, and will be conducted by email. We need to survey enough veterans to achieve a margin of error (MOE) of 3% with respect to the mean values measured. When accounting for a response rate of 15%,
+ this amounts to about 7,200 veterans/beneficiaries.
+ 
+Let's take a look at the data. This particular 
+dataset has been parsed for duplicate SSN's crossed 
+by name. In this way, if a transfer of entitlement 
+occurred (same SSN) it would be left in the data, 
+but an individual who used multiple benefits would 
+only be represented once in the data to prevent 
+oversampling. See the file "DataJoining.R" for 
+the details.
+
+# Data Import
+
+```{r data, include=FALSE}
+setwd("C:/Users/VBACOWhiteJ1/Documents/EDU_Docs/Survey-2021")
+data <- read_csv("./PA&I_DataPulls/2021-10-14_Processed.csv")
+```
+
+```{r Eligibility}
+# Summarize the eligibility variable, EN_USED_DAYS
+# i.e. the number of days of entitlement used
+summary(data$EN_USED_DAYS)
+```
+
+A few odd things: Some of the rows lack a days used ("EN_USED_DAYS") value, and some have a negative days used value. Many of the NA's are from the Ch35 data which lacked a lot of info present in the other data we were sent. We only want to sample vets/beneficiaries who have used their EDU benefits, but because of the complete lack of info for Ch 35, I'm going to have to leave this alone.
+
+```{r SaveEligible}
+# Select the cols of greatest use here
+data <- data %>% 
+  select(RANK, GENDER, RACE, ERA_OF_SERVICE
+         ,CLIENT_TYPE, BENEFIT, DOB, CLIENT_SSN
+         ,SSN, FILE_NUM, FIRST_NM, LAST_NM
+         ,VAONCE_EMAIL, LTS_EMAIL, EBENEFITS_EMAIL
+         ,PAYEE_NUM, vsignals)
+```
+
+# Data Parsing
+
+After we get the survey results, the VA wants us to do analyses using a large number of subsets. Because we are doing a systematic sampling, the data need to be ordered by those subsetting variables (or the most important ones) in order to achieve an even sampling operation. The order of the sorting will also be important.
+
+For example, there are both vets and children/spouses of vets in this dataset. Most of the children do not have a rank or era of service, so sorting based on that is not useful for them. Futhermore, there is no info beyond BENEFIT type for Ch 35 clients. I should first sort by BENEFIT, then: CLIENT_TYPE, GENDER, RANK, ERA_OF_SERVICE, RACE, DOB
+
+In order to do the above sorting, I must first verify that the data even make sense. Summarizing the columns can give us a quick enough glance.
+
+## Rank
+```{r Rank}
+summary(as.factor(data$RANK))
+```
+
+There are a lot of discrepancies here. Example: 1LT, 1ST L, and 1STLT all mean 1st lieutenant. The discrepancy appears to be related to the military branch, with 1LT being Army, 1ST L being AF, and 1STLT being Marines. This ends up being a composite variable that accounts for both rank and branch of military, albeit inconsistently (Army and Marines sergeant are both SGT). I'm going to flatten it for the sake of simplicity and make a new variable called "Pay_Grade" that converts all these to numbers representing the government pay grade (e.g. E-1 is Pvt, I'll replace with the number 1). The code for doing so is in the original RMarkdown, hidden here for brevity.
+
+```{r PayGrade, echo=FALSE}
+# Build a Dictionary
+PayGrade <- c(
+  "PVT" = 1, "SGT" = 5, "SSG" = 6, "SFC" = 7,"MSG"=8
+  ,"AB" = 1, "1STSG" = 8, "SGM" = 9, "CSM" =9
+  ,"SR" = 1, "SMA" = 9, "WO1" = 10, "WO" = 10
+  ,"PVT" = 1, "WO-1" = 10, "CW2" = 11, "CWO2" = 11
+  ,"PV2" = 2, "CWO-2" = 11, "CW3" = 12, "CWO3" = 12
+  ,"PFC" = 2, "CWO-3" = 12, "CW4" =13, "CWO4" = 13
+  ,"SA" = 2, "CWO-4" = 13, "CW5" = 14, "CWO5" = 14
+  ,"AMN" = 2, "CWO-5" = 14, "2LT" = 15, "2D LT" = 15
+  ,"PV1" = 3, "2NDLT" = 15, "1LT" = 16, "1ST L" = 16
+  ,"A1C" = 3, "1STLT" = 16, "CPT" = 17, "MAJ" = 18
+  ,"SN" = 3, "LTC" = 19, "COL" = 20, "BG" = 21
+  ,"LCPL" = 3, "MG" =22, "LTG" = 23, "GEN" = 24
+  ,"SPC" = 4, "PO2" = 5, "PO1" = 6, "CPO" = 7
+  ,"CPL" = 4, "SCPO" = 8, "MCPO" = 9, "MCPOC"=9
+  ,"PO3" = 4, "NON-P"=NA, "ENS" = 15, "LTJG" = 16
+  ,"SR" = 4, "SRA" = 4, "LT" = 17, "LCDR" = 18
+  ,"CDR" = 19, "CAPT" = 20, "RDML"=21,"RADM"=22
+  ,"VADM"=23, "SSGT"=6, "GYSGT"=7,"MSGT"=8
+  ,"MGYSG"=9,"SGTMA"=9,"LTCOL" = 19,"LT CO"=19
+  ,"BGEN"=21,"MAJGE"=22,"LTGEN"=23,"TSGT"=6
+  ,"SMSGT"=8,"CMSGT"=9,"CMSAF"=9, "SP4" = 4
+  ,"SP5" = 5, "SP6" = 6, "1SG" = 8, "SMOFM"=9
+)
+data$Pay_Grade <- PayGrade[data$RANK]
+```
+
+## Gender
+```{r Gender, echo = FALSE}
+summary(as.factor(data$GENDER))
+```
+The gender variable is about what I expected.
+
+## Race
+```{r Race, echo=FALSE}
+summary(as.factor(data$RACE))
+```
+Normally, a categorical variable should have levels that are independent of one another. Here we have "Asian", "Asian or Pacific Islander", and "Native Hawaiian/Pacific Islander". Race is an artificial construct, but I appreciate when there is some consistency in a dataset. We may need to collapse some of these categories for final analysis. I'm going to ignore it for now.
+
+## Era of Service
+```{r Era, echo=FALSE}
+summary(as.factor(data$ERA_OF_SERVICE))
+```
+The Korean War, WWI, and WWII recipients are not veterans but their beneficiaries, so this checks out. Otherwise, they'd be too old.
+
+## Client Type (Vet or spouse/child)
+```{r Client, echo=FALSE}
+summary(as.factor(data$CLIENT_TYPE))
+```
+Fortunately, this data is complete (no NA's). In my previous data parsing I pushed the Ch 35 data to have "TOE" as a designation. Fry is the Fry Scholarship for children/spouses of deceased service members, post 9/11. TOE is a transfer of entitlement to spouse/children. Vet/SM is for veterans and service members.
+
+## Benefit Type
+```{r Benefit, echo=FALSE}
+summary(as.factor(data$BENEFIT))
+```
+This is essentially complete. Ch 34 doesn't exist anymore (rolled into Ch30). Ch 31 is a disability benefit meant to help disabled vets acclimate.
+
+## Date of Birth
+```{r DOB, echo=FALSE}
+summary(lubridate::mdy(data$DOB))
+```
+The central values make sense. Some values are coded differently from the main set and causing weird conversions. Some vets appear to be born in the future too. They are not that numerous (~ 111 rows), so it shouldn't affect the ultimate analysis much. I'm leaving these rows in the sampling because it is possible that the entry errors could be corrected.
+
+# Sampling
+
+We are using systematic sampling, so we will choose every k-th object in an ordered version of the dataset. Where k is essentially the length of the dataset divided by our desired sample size. My actual code takes into account the slight rounding error in this calculation. Also, the starting value is chosen randomly from one of the first k values of the dataset.
+
+K here is approximately `r round(dim(data)[1]/7200,4)`, which given 7200 samples will cover a length of `r round(dim(data)[1]/7200,4)*7200`. Given the dataset's length of `r dim(data)[1]`, that leaves `r dim(data)[1] %% round(dim(data)[1]/7200,4)` veterans unsampled. We are going to randomly choose a starting position, so we should choose one randomly between position 1 and `r dim(data)[1] %% round(dim(data)[1]/7200,0)` in order for every data element to have a chance of being selected.
+
+```{r SortingAndSampling}
+# Start by completely randomizing the order of
+#   elements. This will make it so that any
+#   variables that we are not sorting on, do not end
+#   up affecting the sampling (they will be
+#   randomized).
+set.seed(5643211)
+data <- data[sample(nrow(data)),]
+
+# Now sort based on the grouping variables
+data <- data[
+  order(
+    data$BENEFIT
+    ,data$CLIENT_TYPE
+    ,data$GENDER
+    ,data$Pay_Grade
+    ,data$ERA_OF_SERVICE
+    ,data$RACE
+    ,data$DOB
+  ),
+]
+
+# Now let's sample
+# Create two samples in case we need to resample
+start_range <- round(dim(data)[1]/7200,0)
+
+k <- round(dim(data)[1]/7200,4)
+
+Systematic <- function(K. = k
+                       ,data. = data
+                       ,Start_Range. = start_range
+                       ,sample_size = 7200)
+  {
+  begin <- sample(Start_Range., 1)
+  end <- (sample_size*K.)-begin #subtract for begin
+  print(paste(
+    begin
+    ,"to"
+    ,end
+  ))
+  
+  pull <- seq(from = 0, to = end, by = K.)
+  pull <- round(pull + begin, 0)
+  
+  Sample_Vector <- pull
+  return(Sample_Vector)
+}
+
+# Sample
+set.seed(19834223)
+main_sample <- data[Systematic(),]
+back_up_sample1 <- data[Systematic(),]
+back_up_sample2 <- data[Systematic(),]
+back_up_sample3 <- data[Systematic(),]
+back_up_sample4 <- data[Systematic(),]
+back_up_sample5 <- data[Systematic(),]
+back_up_sample6 <- data[Systematic(),]
+back_up_sample7 <- data[Systematic(),]
+
+back_up_sample <- rbind(
+  back_up_sample1
+  ,back_up_sample2
+  ,back_up_sample3
+  ,back_up_sample4
+  ,back_up_sample5
+  ,back_up_sample6
+  ,back_up_sample7
+)
+```
+
+The main sample is intended for the initial survey, and the second sample is intended for *ONLY IF* the survey fails to meet its expected response rate (15%).
+```{r output}
+main_sample$EMAIL <- if_else(
+    !is.na(main_sample$LTS_EMAIL)
+    ,main_sample$LTS_EMAIL
+    ,if_else(
+        !is.na(main_sample$EBENEFITS_EMAIL)
+        ,main_sample$EBENEFITS_EMAIL
+        ,main_sample$VAONCE_EMAIL
+    )
+)
+main_sample <- main_sample %>%
+  mutate(id = 1:dim(main_sample)[1])
+
+back_up_sample$EMAIL <- if_else(
+    !is.na(back_up_sample$LTS_EMAIL)
+    ,back_up_sample$LTS_EMAIL
+    ,if_else(
+        !is.na(back_up_sample$EBENEFITS_EMAIL)
+        ,back_up_sample$EBENEFITS_EMAIL
+        ,back_up_sample$VAONCE_EMAIL
+    )
+)
+back_up_sample <- back_up_sample %>%
+  mutate(id = 7201:(dim(back_up_sample)[1] +
+                      7200))
+# Bad email records
+back_up_sample$EMAIL[grepl("noreply",back_up_sample$EMAIL, ignore.case = T)] <- NA
+
+write_csv(main_sample
+          ,"Main_sample-414survey.csv")
+write_csv(back_up_sample
+          ,"Back_up_sample-414survey.csv")
+
+# Pull away those who need an address
+address <- is.na(main_sample$EMAIL)
+addresses_needed <- main_sample[address,]
+write_csv(addresses_needed
+          ,"Main_sample-NoEmail.csv")
+
+# For back up sample, missing email:
+back_up_sample_NoEmail <- back_up_sample[
+  is.na(back_up_sample$EMAIL),
+]
+write_csv(back_up_sample_NoEmail
+          ,"Back_up_sample_NoEmail-414survey.csv")
+```

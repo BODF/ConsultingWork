@@ -1,0 +1,616 @@
+---
+title: "Design Weights"
+author: "Jordan White, PhD"
+date: "9/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readr)
+#library(survey)
+setwd(paste("C:/Users/VBACOWhiteJ1/Documents"
+            ,"/EDU_Docs/Survey-2021"
+            ,sep = "")
+)
+```
+
+# Goals
+We've selected a sample for the survey, so now design weights can be calculated. To avoid too complex a series of calculations, let's focus on five variables: Gender, Benefit type, and Client Type, Race, and Era of service.
+
+## Import prior data
+```{r Data, echo=FALSE}
+# import the eligible dataset and the sample index
+# subset and create a separate table for the sample
+data <- read_csv(#original data
+    "./PA&I_DataPulls/2022-02-28_processed.csv"
+    )
+
+sample_data <- read_csv("Sample_Design_Weights.csv")
+# sample_data1 <-
+#   read_csv("Main_sample-414survey.csv"
+#            ,col_types = "ccccccccccccccccccic")
+# sample_data2 <- 
+#   read_csv("Back_up_sample-414survey.csv"
+#            ,col_types = "ccccccccccccccccccic") %>%
+#   select(names(sample_data1))
+# sample_data <- sample_data1 %>%
+#                          bind_rows(sample_data2)
+
+# Ran the below code once, to correct data
+# # Import data to correct SV/Vet Race and Gender
+# # It isn't complete, but this helps
+# fix1 <- read_csv(paste(
+#   "./PA&I_DataPulls/VetsMissing-Gender-OR-"
+#   ,"Race_Output1.csv"
+#   ,sep=""))
+# fix2 <- read_csv(paste(
+#   "./PA&I_DataPulls/VetsMissing-Gender-OR-"
+#   ,"Race_Output2.csv"
+#   ,sep=""))
+# fix3 <- read_csv(paste(
+#   "./PA&I_DataPulls/VetsMissing-Gender-OR-"
+#   ,"Race_Output3.csv"
+#   ,sep=""))
+# fix <- rbind(
+#   fix1, fix2, fix3
+#   )
+# rm(
+#   fix1, fix2, fix3
+#   )
+# 
+# # Push all to upper case
+# data <- data %>%
+#   mutate(FIRST_NM = toupper(FIRST_NM),
+#          LAST_NM = toupper(LAST_NM))
+# sample_data <- sample_data %>%
+#   mutate(FIRST_NM = toupper(FIRST_NM),
+#          LAST_NM = toupper(LAST_NM))
+# fix <- fix %>%
+#   mutate(FIRST_NAME = toupper(FIRST_NAME),
+#          LAST_NAME = toupper(LAST_NAME))
+# fix <- fix %>%
+#     select(SSN, FIRST_NAME, LAST_NAME, SEX, RACE)
+# 
+# ### Match and fill values
+# data <- data %>%
+#   left_join(fix, by = c(
+#     "SSN" = "SSN", "FIRST_NM" = "FIRST_NAME",
+#     "LAST_NM" = "LAST_NAME"
+#   ))
+# sample_data <- sample_data %>%
+#   left_join(fix, by = c(
+#     "SSN" = "SSN", "FIRST_NM" = "FIRST_NAME",
+#     "LAST_NM" = "LAST_NAME"
+#   ))
+# 
+# # Fill empty race values
+# data$RACE <- NA
+# data$RACE[!is.na(data$RACE.x)] <-
+#   data$RACE.x[!is.na(data$RACE.x)]
+# data$RACE[!is.na(data$RACE.y)& #keep old if exists
+#           is.na(data$RACE)] <-
+#   data$RACE.y[!is.na(data$RACE.y)&
+#                 is.na(data$RACE)]
+# sample_data$RACE <- NA
+# sample_data$RACE[!is.na(sample_data$RACE.x)] <-
+#   sample_data$RACE.x[!is.na(sample_data$RACE.x)]
+# sample_data$RACE[!is.na(sample_data$RACE.y)&
+#           is.na(sample_data$RACE)] <-
+#   sample_data$RACE.y[!is.na(sample_data$RACE.y)&
+#                 is.na(sample_data$RACE)]
+# 
+# # Fill empty gender values
+# data$GENDER[is.na(data$GENDER)] <- 
+#   data$SEX[is.na(data$GENDER)]
+# sample_data$GENDER[is.na(sample_data$GENDER)] <- 
+#   sample_data$SEX[is.na(sample_data$GENDER)]
+# 
+# # Remove unnecessary columns
+# data <- data %>%
+#   select(-SEX, -RACE.x, -RACE.y)
+# sample_data <- sample_data %>%
+#   select(-SEX, -RACE.x, -RACE.y)
+# sample_data <- sample_data[!duplicated(
+#  sample_data
+# ),]
+# data <- data[!duplicated(
+#     data
+# ),]
+# # Save these files
+# write_csv(data,
+#     "./PA&I_DataPulls/2021-10-14_Processed.csv")
+# write_csv(sample_data,
+#     "Main_sample-414survey.csv")
+#
+# # Below code was used to correct most of the 
+# # missing gender codes
+# x1 <- x1 %>% bind_rows(
+# read_csv("WholePop_GenderCorrects9.csv"
+#               ,col_names = 
+#     c("SSN","Gender","SelfGender")))
+# data <- data %>% mutate(
+# Social = if_else(is.na(CLIENT_SSN)
+#           ,SSN, CLIENT_SSN))
+# )
+# # Coerce some of the values to simplify
+# gender_lookup <- c(
+#   "N" = "U"
+#   ,"O" = "U"
+#   ,"TF" = "F"
+#   ,"TM" = "M"
+#   ,"M" = "M"
+#   ,"F" = "F"
+#   ,"NULL" = NA
+# )
+# 
+# x1 <- x1 %>%
+#   mutate(SelfGender = gender_lookup[SelfGender]
+#   ) %>%
+#   mutate(Gender = gender_lookup[Gender]) %>%
+#   mutate(Gender = if_else(is.na(SelfGender)
+#                           ,Gender
+#                           ,SelfGender))
+# data <- data %>% 
+#   left_join(x1 %>%
+#              select(1,2)
+#              ,by = c("Social" = "SSN"))
+# data$GENDER[(data$GENDER =="Z"|
+#                data$GENDER=="U"|
+#                is.na(data$GENDER))] <-
+#   data$Gender[(data$GENDER =="Z"|
+#                data$GENDER=="U"|
+#                is.na(data$GENDER))]
+# # Move 57 U's to NA. This is to avoid weird weights
+# data$GENDER[data$GENDER == "U"] <- NA
+# data <- data %>% select(-Social)
+# write_csv(data,
+#         "./PA&I_DataPulls/2022-02-28_processed.csv")
+# # Apply to the samples
+# sample_data1 <- sample_data1 %>% 
+#   mutate(
+#  Social = if_else(is.na(CLIENT_SSN)
+#           ,SSN, CLIENT_SSN)) %>%
+#   left_join(x1 %>%
+#              select(1,2)
+#              ,by = c("Social" = "SSN"))
+# sample_data2 <- sample_data2 %>% 
+#   mutate(
+#  Social = if_else(is.na(CLIENT_SSN)
+#           ,SSN, CLIENT_SSN)) %>%
+#   left_join(x1 %>%
+#              select(1,2)
+#              ,by = c("Social" = "SSN"))
+# 
+# sample_data1$GENDER[(sample_data1$GENDER =="Z"|
+#                sample_data1$GENDER=="U"|
+#                is.na(sample_data1$GENDER))] <-
+#   sample_data1$Gender[(sample_data1$GENDER =="Z"|
+#                sample_data1$GENDER=="U"|
+#                is.na(sample_data1$GENDER))]
+# 
+# sample_data2$GENDER[(sample_data2$GENDER =="Z"|
+#                sample_data2$GENDER=="U"|
+#                is.na(sample_data2$GENDER))] <-
+#   sample_data2$Gender[(sample_data2$GENDER =="Z"|
+#                sample_data2$GENDER=="U"|
+#                is.na(sample_data2$GENDER))]
+# 
+# sample_data1 <- sample_data1 %>% select(-Social
+#   ,Gender)
+# sample_data2 <- sample_data2 %>% select(-Social
+#   ,Gender)
+# 
+# write_csv(sample_data1, "Main_sample-414survey.csv")
+# write_csv(sample_data2
+#           ,"Back_up_sample-414survey.csv")
+
+# Change data types
+sample_data <- sample_data %>%
+  mutate(RANK = as.factor(RANK)
+         ,GENDER = as.factor(GENDER)
+         ,ERA_OF_SERVICE = as.factor(ERA_OF_SERVICE)
+         ,CLIENT_TYPE = as.factor(CLIENT_TYPE)
+         ,RACE = as.factor(RACE)
+         ,BENEFIT = as.factor(BENEFIT))
+
+data <- data %>%
+  mutate(RANK = as.factor(RANK)
+         ,GENDER = as.factor(GENDER)
+         ,ERA_OF_SERVICE = as.factor(ERA_OF_SERVICE)
+         ,CLIENT_TYPE = as.factor(CLIENT_TYPE)
+         ,RACE = as.factor(RACE)
+         ,BENEFIT = as.factor(BENEFIT))
+
+sample_data <- sample_data[!duplicated(
+  sample_data$id
+),]
+```
+
+A couple issues I noticed by cross-tabulating factors in the command line before building weights:
+
+* NA's are ignored by default when tabulating. There are also "unknown" and "other" values in this dataset. I'll replace the inconsistent missing value types with NA and then coerce `table` to include the NA's
+* The racial categories are splitting a bit too much. If I include it in the weighting, I need to combine the "Asian" and the "Pacific Islander" with the catchall category that already exists for anyone with ancestry East of the Caucasus.
+* The Fry scholars are so few that it will create bizarre weights. Also, it is a Ch 33 benefit only and is technically a transfer of benefit, tragically (death). I'm going to collapse Fry with TOE for Client Type.
+
+## Data Parsing and Weights
+
+Replace unknown values with NA so that cross-tabulation can occur. After that, build design weights for Benefit, Gender, Race, and Type.
+
+```{r Compression}
+# Gender contains "U" that needs to be NA
+# Race contains "Unknown" and "Other" for NAs
+data$GENDER <- replace(
+  data$GENDER
+  ,data$GENDER %in% c("U","Z")
+  ,NA
+)
+sample_data$GENDER <- replace(
+  sample_data$GENDER
+  ,sample_data$GENDER %in% c("U","Z")
+  ,NA
+)
+
+data$RACE <- replace(
+  data$RACE
+  ,data$RACE %in% c("Unknown","Other","Z")
+  ,NA
+)
+sample_data$RACE <- replace(
+  sample_data$RACE
+  ,sample_data$RACE %in% c("Unknown","Other","Z")
+  ,NA
+)
+
+# Recode "FRY" as "TOE" in Client column
+# Recode "Asian" and 
+# "Native Hawaiian/Pacific Islander" as
+# "Asian or Pacific Islander Unspecified"
+data[data$CLIENT_TYPE == "FRY", "CLIENT_TYPE"] <-
+  "TOE"
+sample_data[sample_data$CLIENT_TYPE == "FRY"
+            ,"CLIENT_TYPE"] <-
+  "TOE"
+
+data[grep(
+      "Asian|Native Hawaiian/Pacific Islander"
+      ,data$RACE)
+      ,"RACE"] <-
+  "Asian or Pacific Islander Unspecified"
+sample_data[grep(
+      "Asian|Native Hawaiian/Pacific Islander"
+      ,sample_data$RACE)
+      ,"RACE"] <-
+  "Asian or Pacific Islander Unspecified"
+
+# Drop the now empty factor levels
+data$GENDER <- droplevels(data$GENDER)
+sample_data$GENDER <- droplevels(sample_data$GENDER)
+
+data$RACE <- droplevels(data$RACE)
+sample_data$RACE <- droplevels(sample_data$RACE)
+
+data$CLIENT_TYPE <- droplevels(data$CLIENT_TYPE)
+sample_data$CLIENT_TYPE <- droplevels(sample_data$CLIENT_TYPE)
+```
+
+Now let's build cross-tabulations and from that calculate the design weights.
+
+```{r WeightsWithRace}
+# These weights include race in the cross
+# tabulation, which produces some categories with
+# extremely low sample sizes and strong weights
+
+# Also note that the multiracial category had to be
+# dropped from the original data b/c there are none
+# in the sample
+data_cross <- as.data.frame(
+  table(data$BENEFIT
+        ,data$CLIENT_TYPE
+        ,data$GENDER
+        ,data$RACE
+        ,exclude = "Multiple race"
+        ,useNA = "ifany")
+)
+sample_cross <- as.data.frame(
+  table(sample_data$BENEFIT
+        ,sample_data$CLIENT_TYPE
+        ,sample_data$GENDER
+        ,sample_data$RACE
+        ,useNA = "ifany")
+)
+
+# Build four functions
+# One 'which' to detect all regular input
+# One each for NA combos
+# Use the output index to collect Freq on the fly
+witcher1 <- function(cross_tab
+                     ,benefit
+                     ,client
+                     ,gender
+                     ,race){
+  which(
+    as.vector(cross_tab[,1]) == benefit &
+    as.vector(cross_tab[,2]) == client &
+    as.vector(cross_tab[,3]) == gender &
+    as.vector(cross_tab[,4]) == race
+  )
+}
+
+witcher2 <- function(cross_tab
+                     ,benefit
+                     ,client
+                     ,race){
+  which(
+    as.vector(cross_tab[,1]) == benefit &
+    as.vector(cross_tab[,2]) == client &
+    is.na(cross_tab[,3]) &
+    as.vector(cross_tab[,4]) == race
+  )
+}
+
+witcher3 <- function(cross_tab
+                     ,benefit
+                     ,client
+                     ,gender){
+  which(
+    as.vector(cross_tab[,1]) == benefit &
+    as.vector(cross_tab[,2]) == client &
+    as.vector(cross_tab[,3]) == gender &
+    is.na(cross_tab[,4])
+  )
+}
+
+witcher4 <- function(cross_tab
+                     ,benefit
+                     ,client){
+  which(
+    as.vector(cross_tab[,1]) == benefit &
+    as.vector(cross_tab[,2]) == client &
+    is.na(cross_tab[,3]) &
+    is.na(cross_tab[,4])
+  )
+}
+
+# Build and parse design weights,
+# then use the Witchers to apply the design weights
+
+# check for completeness
+# make sure that if something has dropped from
+# the sample frame, we aren't building a design
+# weight for it
+data_cross$Paste <- paste(# a pseudo-column of names
+    data_cross$Var1
+    ,data_cross$Var2
+    ,data_cross$Var3
+    ,data_cross$Var4
+)
+
+sample_cross$Paste <- paste(
+    sample_cross$Var1
+    ,sample_cross$Var2
+    ,sample_cross$Var3
+    ,sample_cross$Var4
+)
+
+# Now remove data rows without representation
+# in the sample
+data_cross <- data_cross %>% 
+  filter(Paste %in% sample_cross$Paste)
+
+
+# Calculate weights
+sample_cross$D_weight_race <- data_cross$Freq /
+  sample_cross$Freq
+
+# Deal with a few out of range issues
+sample_cross[
+  is.infinite(sample_cross$D_weight_race)
+  ,"D_weight_race"] <- NA
+sample_cross[
+  is.nan(sample_cross$D_weight_race)
+  ,"D_weight_race"] <- NA
+
+# initialize empty column on the sample data frame
+sample_data$D_weight_race <- NA
+
+for(index in 1:dim(sample_data)[1]){
+  rows <- sample_data[index,]
+  if(!is.na(rows$GENDER) &
+     !is.na(rows$RACE)){
+    i <- witcher1(
+      sample_cross
+      ,benefit = rows$BENEFIT
+      ,client = rows$CLIENT_TYPE
+      ,gender = rows$GENDER
+      ,race = rows$RACE
+    )
+    sample_data$D_weight_race[index] <-
+      sample_cross$D_weight_race[i]
+  } else if(is.na(rows[,"GENDER"]) &
+            !is.na(rows[,"RACE"])){
+    i <- witcher2(
+      sample_cross
+      ,benefit = rows$BENEFIT
+      ,client = rows$CLIENT_TYPE
+      ,race = rows$RACE
+    )
+    sample_data$D_weight_race[index] <-
+      sample_cross$D_weight_race[i]
+  } else if(!is.na(rows$GENDER) &
+            is.na(rows$RACE)){
+    i <- witcher3(
+      sample_cross
+      ,benefit = rows$BENEFIT
+      ,client = rows$CLIENT_TYPE
+      ,gender = rows$GENDER
+    )
+    sample_data$D_weight_race[index] <-
+      sample_cross$D_weight_race[i]
+  } else if(is.na(rows$GENDER) &
+     is.na(rows$RACE)){
+      i <- witcher4(
+      sample_cross
+      ,benefit = rows$BENEFIT
+      ,client = rows$CLIENT_TYPE
+    )
+    sample_data$D_weight_race[index] <-
+      sample_cross$D_weight_race[i]
+  }
+}
+
+# For checking the weights:
+#    Note: there is a machine precision error that
+#    produced a FALSE comparison for one of the 
+#    comparisons that should be TRUE. Check any
+#    FALSE's manually
+
+# Check for NA's in sample weights
+summary(sample_data$D_weight_race)
+
+# Build Sums to verify population size weighting
+Sample_weight_test <- sample_data %>%
+    group_by(BENEFIT, CLIENT_TYPE, GENDER, RACE) %>%
+    summarise(n = sum(D_weight_race)) # Sample
+Data_weight_test <- data %>%
+    group_by(BENEFIT, CLIENT_TYPE, GENDER, RACE) %>%
+    summarise(N = n()) # Population
+Data_weight_test <- Data_weight_test %>%
+  inner_join(Sample_weight_test)
+
+# Check any FALSE values for machine precision
+Data_weight_test$N == round(
+  Data_weight_test$n)
+```
+
+I also decided to make weights that disregard race. This will allow comparisons with the race-inclusive weights. If adding race reduces the variance of the weighted data, then it helps. If not, it would be better to use the simpler weights below.
+
+```{r WeightsNoRace}
+# Redo except exclude race from the weighting scheme
+data_cross <- as.data.frame(
+  table(data$BENEFIT
+        ,data$CLIENT_TYPE
+        ,data$GENDER
+        ,useNA = "ifany")
+)
+sample_cross <- as.data.frame(
+  table(sample_data$BENEFIT
+        ,sample_data$CLIENT_TYPE
+        ,sample_data$GENDER
+        ,useNA = "ifany")
+)
+
+# Build two functions
+# One 'which' to detect all regular input
+# One for NA in GENDER
+# Use the output index to collect Freq on the fly
+witcher1 <- function(cross_tab
+                     ,benefit
+                     ,client
+                     ,gender){
+  which(
+    as.vector(cross_tab[,1]) == benefit &
+    as.vector(cross_tab[,2]) == client &
+    as.vector(cross_tab[,3]) == gender
+  )
+}
+
+witcher2 <- function(cross_tab
+                     ,benefit
+                     ,client){
+  which(
+    as.vector(cross_tab[,1]) == benefit &
+    as.vector(cross_tab[,2]) == client &
+    is.na(cross_tab[,3])
+  )
+}
+
+# check for completeness
+# make sure that if something has dropped from
+# the sample frame, we aren't building a design
+# weight for it
+data_cross$Paste <- paste(# a pseudo-column of names
+    data_cross$Var1
+    ,data_cross$Var2
+    ,data_cross$Var3
+    ,data_cross$Var4
+)
+
+sample_cross$Paste <- paste(
+    sample_cross$Var1
+    ,sample_cross$Var2
+    ,sample_cross$Var3
+    ,sample_cross$Var4
+)
+
+# Now remove data rows without representation
+# in the sample
+data_cross <- data_cross %>% 
+  filter(Paste %in% sample_cross$Paste)
+
+# Build and parse design weights,
+# then use the Witchers to apply the design weights
+
+sample_cross$D_weight <- data_cross$Freq /
+  sample_cross$Freq
+
+sample_cross[
+  is.infinite(sample_cross$D_weight)
+  ,"D_weight"] <- NA
+sample_cross[
+  is.nan(sample_cross$D_weight)
+  ,"D_weight"] <- NA
+
+# initialize empty column
+sample_data$D_weight <- NA
+
+for(index in 1:dim(sample_data)[1]){
+  rows <- sample_data[index,]
+  if(!is.na(rows$GENDER)){
+    i <- witcher1(
+      sample_cross
+      ,benefit = rows$BENEFIT
+      ,client = rows$CLIENT_TYPE
+      ,gender = rows$GENDER
+    )
+    sample_data$D_weight[index] <-
+      sample_cross$D_weight[i]
+  } else if(is.na(rows$GENDER)){
+    i <- witcher2(
+      sample_cross
+      ,benefit = rows$BENEFIT
+      ,client = rows$CLIENT_TYPE
+    )
+    sample_data$D_weight[index] <-
+      sample_cross$D_weight[i]
+  } 
+}
+
+# For checking the weights:
+#    Note: there is a machine precision error that
+#    produced a FALSE comparison for one of the 
+#    comparisons that should be TRUE. Check any
+#    FALSE's manually
+# These values are more centered
+summary(sample_data$D_weight)
+
+Sample_weight_test <- sample_data %>%
+    group_by(BENEFIT, CLIENT_TYPE, GENDER) %>%
+    summarise(n = sum(D_weight))
+Data_weight_test <- data %>%
+    group_by(BENEFIT, CLIENT_TYPE, GENDER) %>%
+    summarise(N = n())
+Data_weight_test <- Data_weight_test %>%
+  inner_join(Sample_weight_test)
+
+# If FALSE, check manually,
+# potentially a machine precision issue
+Data_weight_test$N == round(Data_weight_test$n)
+```
+The design weights all appear to sum to the population size, so everything is working normally.
+
+```{r Output}
+write_csv(sample_data,"Sample_Design_Weights.csv")
+```
+

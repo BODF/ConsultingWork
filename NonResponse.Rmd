@@ -1,0 +1,429 @@
+---
+title: "NR Weights"
+author: "Jordan White, PhD"
+date: "3/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(survey)
+#library(rpart)
+library(lubridate)
+# library(parallel)
+# library(doParallel)
+# library(caret)
+#library(PracTools)
+setwd(paste("C:/Users/VBACOWhiteJ1/Documents"
+            ,"/EDU_Docs/Survey-2021"
+            ,sep = "")
+)
+```
+
+## Overview
+We need to take the design weights for the sample and redistribute the weights across the responding sample. The responding sample also has a few ineligibles, so we need either eligibility weights or a non-response weighting scheme that takes eligibility into account.
+
+Let's start by pulling the data in and marking all non-responders and inelegibles as FALSE in a a new column called "Response". Then let's try a couple GLMs with binomial linking functions and Response as the outcome variable.
+
+```{r}
+# This is the full survey sample with two different
+# design/base weights available
+### One design weight considers benefit type,
+### client type, and gender. The other includes race
+data <- read_csv("Sample_Design_Weights.csv")
+
+# Our survey responses
+# Ineligibles respond "No" to having used the benefit
+responses <- read_csv(
+  "Responses/va_responses_export_2022-03-09_1083responses.csv"
+  ,col_select = c(1,7,9:14,17:18,37:44))
+
+# reformat a few things
+responses <- responses %>%
+  rename(
+    Used =
+      `Did you begin an education or training program using educational assistance programs administered by the VA?`
+    ,Gender = `What is your sex?`
+  ) %>%
+  mutate(Client_type = if_else(
+    grepl("^Yes",Used)
+    ,if_else(
+      grepl("Fry|Veteran", Used)
+      ,"TOE"
+      ,"VET / SM"
+    )
+    ,if_else(
+      `I am a Dependent/Spouse` == "Yes"
+      ,"TOE"
+      ,"VET / SM"
+    )
+  )) %>%
+  mutate(Gender = if_else(
+    Gender == "Female"
+    ,"F"
+    ,Gender
+    )) %>%
+  mutate(Gender = if_else(
+    Gender == "Male"
+    ,"M"
+    ,Gender
+  )) %>%
+  mutate(Gender = if_else(
+    Gender %in% c("F","M")
+    ,Gender
+    ,false = as.character(NA)
+  ))
+
+# Figure out the primary benefit/set of benefits
+# Many use CH33 and some of those use one other
+# so make a boolean for CH33 and then a separate
+# column for the others
+
+names(responses)[13:18] <- c(
+  "CH33","CH30","S1606","CH35","CH32","S1607"
+)
+# Code below was used to check benefit accuracy
+# Seems some vets don't remember what they used
+# Just go off of what the VA says they used
+# responses <- responses %>%
+#   mutate(Benefit = if_else(CH30 == 1
+#     ,"CH30"
+#     ,if_else(S1606 == 1
+#     ,"1606"
+#     ,if_else(S1607 == 1
+#     ,"1607"
+#     ,if_else(CH35 == 1
+#     ,"CH35"
+#     ,if_else(CH32 == 1
+#     ,"CH32"
+#     ,as.character(NA)
+#     )))))
+#     )
+
+# Before moving forward, let's verify categories
+# based on the survey responses.
+## i.e. if someone responds that they are male and we
+## have a female for record
+## and all the base weights recalculated
+data_comparison <- data %>%
+  select(id, GENDER, CLIENT_TYPE
+         ,SSN) %>%
+  inner_join(responses, by = c("id" = 
+                      "Education Assistance ID"))
+
+# some of the Client Types might be mixed up, but
+# probably not an issue
+
+# Maybe five genders are wrong. One looks like
+# someone's wife responded to the survey
+# Two others are non-eligible so I don't know if
+# it is worth recalculating all the weights.
+# For example, was the gender wrong in our data or
+# is the person trans-gender? Do the life
+# experiences of a trans-gender person statistically
+# equate those of a cis-gender person? How does that
+# affect the validity of the survey's weights?
+# I don't see this as a winning situation
+```
+
+While checking for any inconsistencies between the responses and our data on the respondents, I found that several thought they had CH32 only, when the only data I have says CH30 (no access to CH32 data, obsolete). There are a couple gender changes which may be real, but I should be careful about benefit changes. The VA's data on that is likely better than the memory of the recipients. Especially given that the benefits are like an alphabet soup. It can be hard for us to keep track of it even.
+
+There may be two real and relevant gender changes, but I am hesitant to go against the "official" data. Maybe just keep a pin in the idea.
+
+```{r}
+# Use 'responses' to create a binary response
+# column in the weighted sample frame
+data$Response <- FALSE
+data$Response[
+  data$id %in% responses$`Education Assistance ID`
+] <- TRUE
+
+# also create an eligibility column in 'response'
+responses$Eligible <- FALSE
+responses$Eligible[
+  grepl("^Yes", responses$Used)
+] <- TRUE
+```
+```{r PropensityScores}
+# Build a basic design object
+# original pop is 2,583,603 long, but our sample
+# did not hit all the crosstabs effectively (-20)
+fpc <- rep(2583603-20, dim(data)[1])
+base_design <- svydesign(
+  ids = ~1 # no clusters (i.e. 1 cluster)
+  ,data = data %>% mutate(GENDER =
+          if_else(is.na(GENDER)
+                  ,"U"
+                  ,GENDER))
+  ,fpc = fpc
+  ,weights = ~D_weight
+)
+
+# # Build a design object that uses the race weights
+# # Commented out b/c the base weights give better
+# # totals
+# race_design <- svydesign(
+#   ids = ~1
+#   ,data = data %>% mutate(GENDER =
+#           if_else(is.na(GENDER)
+#                   ,"U"
+#                   ,GENDER)
+#           ,RACE = 
+#             if_else(is.na(RACE)
+#                     ,"UnknownRace"
+#                     ,RACE))
+#   ,fpc = fpc
+#   ,weights = ~D_weight_race
+# )
+
+base_logit <- svyglm(
+  Response ~ GENDER +
+    CLIENT_TYPE +
+    BENEFIT,
+  family = quasibinomial(link = "logit"),
+  design = base_design
+)
+# Extract response propensities
+base_hat <- base_logit$linear.predictors
+pred.base <- exp(base_hat) / (1 + exp(base_hat))
+data$BaseNR_PropensityLogit <- (data$D_weight*
+  data$Response)/(pred.base) #zero out Non-response
+
+# Race was a very poor predictor of response rate
+# Should probably ignore race from the perspective
+#   of non-response, but it could still affect
+#   the answers to the survey
+# race_logit <- svyglm(
+#   Response ~ GENDER +
+#     CLIENT_TYPE +
+#     BENEFIT +
+#     RACE,
+#   family = quasibinomial(link = "logit"),
+#   design = race_design
+# )
+# 
+# race_logit2 <- svyglm(
+#   Response ~ GENDER +
+#     CLIENT_TYPE +
+#     BENEFIT,
+#   family = quasibinomial(link = "logit"),
+#   design = race_design
+# )
+# # Extract response propensities
+# race_hat <- race_logit2$linear.predictors
+# pred.race <- exp(race_hat) / (1 + exp(race_hat))
+# data$RaceNR_PropensityLogit <- (data$D_weight_race*
+#   data$Response)/(pred.race) #zero out Non-response
+```
+
+```{r Calibration}
+# Try post-stratification
+# Also tried raking and GREG but something is broken
+# in that. Perhaps has to do with the zero margins
+# I have in several cross-categories. Unclear
+nr_design <- svydesign(
+  ids = ~1 # no clusters (i.e. 1 cluster)
+  ,data = data %>% mutate(GENDER =
+          if_else(is.na(GENDER)
+                  ,"U"
+                  ,GENDER)) %>%
+    mutate(GENDER = as.factor(GENDER)
+           ,CLIENT_TYPE = as.factor(CLIENT_TYPE)
+           ,BENEFIT = as.factor(BENEFIT))
+  ,fpc = fpc # original is 2,583,603 long
+  ,weights = ~BaseNR_PropensityLogit
+)
+
+# Cross tab for the classes
+# note, this needs to be population level
+pop <- read_csv(#original data
+    "./PA&I_DataPulls/2022-02-28_processed.csv"
+    ) %>% mutate(
+                  GENDER =
+          if_else(is.na(GENDER)
+                  ,"U"
+                  ,GENDER),
+          CLIENT_TYPE =
+            if_else(CLIENT_TYPE == "FRY"
+                    ,"TOE"
+                    ,CLIENT_TYPE))
+N.PS <- xtabs(~GENDER + BENEFIT + CLIENT_TYPE
+              ,data = pop 
+          ,exclude = "CH32"
+          )
+
+# Post-Stratify
+ps.dsgn1 <- postStratify(design = nr_design
+                         ,strata = ~GENDER +
+                           BENEFIT +
+                           CLIENT_TYPE
+                         ,population = N.PS
+          #some of the population classes are 
+          #not present in the sample
+                         ,partial = TRUE
+                         )
+# verify that poststratification sums to the pop
+# totals
+tots <- svytotal(
+  ~interaction(GENDER, BENEFIT, CLIENT_TYPE)
+         ,ps.dsgn1
+         ,na.rm = TRUE)
+tots <- tots[!is.na(tots)]
+tots <- tots[tots > 0]
+dim(pop)[1] - sum(tots) # close to the population
+
+# Add to the data frame
+data$Calibrated_Weight <- weights(ps.dsgn1)
+# fix one odd weight from the non-response group
+data$Calibrated_Weight[
+  is.na(data$Calibrated_Weight)] <- 0
+```
+
+```{r Design Effect}
+# Test Kish and perhaps Henry design effects
+# Kish
+# Below code excludes the non-responders for
+# proper calculation
+kish <- PracTools::deff(data$Calibrated_Weight[
+  data$Calibrated_Weight > 0
+]
+     ,type = "kish")
+
+# take square root for the relative inflation of SE
+# compared to a perfect srs model
+kish ** 0.5
+```
+
+
+```{r output}
+responses <- read_csv(
+  "Responses/va_responses_export_2022-03-09_1083responses.csv")
+
+# reformat a few things
+responses <- responses %>%
+  rename(
+    Used =
+      `Did you begin an education or training program using educational assistance programs administered by the VA?`
+    ,Gender = `What is your sex?`
+  )
+
+# Combine with original data
+# Get benefit, client type, and gender from there
+responses <- data %>%
+  filter(
+  Response == TRUE
+  ) %>%
+  rename(VA_GENDER = GENDER
+         ,Design_weights = D_weight
+         ,Final_weights = Calibrated_Weight
+         ,NR_weights = BaseNR_PropensityLogit) %>%
+  select(id, VA_GENDER, BENEFIT, CLIENT_TYPE
+         ,Design_weights, NR_weights,
+         Final_weights) %>%
+  inner_join(responses
+             ,by = c("id" =
+                       "Education Assistance ID"))
+  
+
+
+write_csv(responses
+          ,"./Analysis/weighted_responses.csv")
+```
+
+```{r cForest, include=FALSE}
+# data <- data %>% 
+#   mutate(RACE = as.factor(RACE)
+#          ,DOB = mdy(DOB)
+#          ,GENDER = as.factor(GENDER)
+#          ,CLIENT_TYPE = as.factor(CLIENT_TYPE)
+#          ,BENEFIT = as.factor(BENEFIT)
+#          )
+
+# # Split into test, train, and validation
+# set.seed(467817438)
+# validationIndex <- createDataPartition(
+#   data$Response, p = 0.1, list = FALSE
+# )
+# validation <- data[validationIndex,] %>% 
+#   select(Response, Age, RACE, GENDER, BENEFIT,
+#          CLIENT_TYPE, vsignals, Pay_Grade)
+# 
+# trainIndex <- createDataPartition(
+#   data$Response[-validationIndex]
+#   ,p=0.7, list = FALSE
+# )
+# train <- data %>% slice(-validationIndex) %>%
+#   slice(trainIndex) %>% 
+#   select(Response, Age, RACE, GENDER, BENEFIT,
+#          CLIENT_TYPE, vsignals, Pay_Grade)
+# 
+# test <- data %>% slice(-validationIndex) %>%
+#   slice(-trainIndex) %>% 
+#   select(Response, Age, RACE, GENDER, BENEFIT,
+#          CLIENT_TYPE, vsignals, Pay_Grade)
+# 
+# # create dependent and independent vars
+# x <- as.data.frame(train[,-1])
+# y <- as.data.frame(train[,1] %>%
+#                      mutate(Response = 
+#                               as.factor(Response))
+#                    )
+# 
+# # Set up parallel
+# cluster <- makeCluster(detectCores() - 2)
+# registerDoParallel(cluster)
+# 
+# # Train controls
+# control <- trainControl(
+#   method = "cv"
+#   ,number = 5
+#   ,allowParallel = TRUE
+# )
+# 
+# # Fit # Will take too long, just use cForest
+# # directly without any training/test sets
+# set.seed(6584)
+# mdl <- train(x, y$Response
+#              ,method = "cforest"
+#              ,trControl = control)
+# # Halt the cluster
+# stopCluster(cluster)
+# registerDoSEQ()
+
+# Change 'mtry' option based on the number of
+# parameters. Determines num of vars randomly
+# selected at each branch
+# Using Age, Race, Gender, Benefit, Client,
+# vsignals, and Pay Grade causes error after ~ 6 hrs
+# rand.forest_nr <- cforest(
+#   Response ~ Age + RACE + GENDER + 
+#     BENEFIT +
+#     CLIENT_TYPE + 
+#     vsignals + Pay_Grade
+#   ,controls = cforest_unbiased(ntree = 500
+#                         ,trace = TRUE)
+#   ,data = data
+# )
+
+# Decision tree has trouble with the low response
+# rate
+# # Let's try a simple decision tree
+# # Have to exclude numericals and focus on factors
+# # or there will be bias
+# data <- data %>%
+#   mutate(vsignals = as.factor(vsignals))
+# set.seed(576257)
+# t1 <- rpart(Response ~ GENDER + BENEFIT +
+#               CLIENT_TYPE + vsignals
+#             ,method = "anova"
+#             ,control = rpart.control(
+#               minbucket = 50
+#               ,cp = 0
+#             )
+#             ,data = data
+#       )
+# print(t1, digits = 4)
+```
