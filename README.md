@@ -2,3 +2,4 @@ This is frankly a code dump to just hold onto a few scripts that I have from my 
 
 * Ope_ID automation scrapes education facility ID's from a Dept of Education website, for matching with internal VA ID's
 * app.R is a Shiny dashboard for an interagency suicide prevention task force. The dashboard was developed in several iterations and the final one uses a Postgre SQL database, hosted by Digital Ocean, to store data in a persistent manner.
+* Survey Sample Construction, Design Weights, and Non-Response weights for a congressionally mandated survey were built using the R code files with similar names herein.
